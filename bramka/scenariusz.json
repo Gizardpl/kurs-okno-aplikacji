@@ -1,0 +1,28 @@
+{
+  "opis": "Zmyślone odpowiedzi atrapy bramki. Klucz 'gdy' to fragment ostatniej wiadomości użytkownika (bez wielkości liter).",
+  "modele": ["claude-opus-5-5", "claude-sonnet-5", "claude-haiku-4-5"],
+  "tytul": "Standup summary",
+  "domyslna": "I looked at the notes folder. Nothing else is needed right now.",
+  "poNarzedziu": "I added a Summary section with two points and an Action items list to 2026-11-03-standup.md.",
+  "zasady": [
+    {
+      "gdy": "what is in this folder",
+      "tekst": "This folder holds your meeting notes: one file per standup, a study plan and a templates folder."
+    },
+    {
+      "gdy": "list the notes",
+      "wstep": "I will list the notes first.",
+      "narzedzie": "Bash",
+      "wejscie": { "command": "ls -1", "description": "List the notes in this folder" }
+    },
+    {
+      "gdy": "summary note",
+      "wstep": "I will add the summary to a new file.",
+      "narzedzie": "Write",
+      "wejscie": {
+        "file_path": "{katalog}/summary.md",
+        "content": "# Summary\n\n- The release moves to Friday.\n- Docs need one more review.\n\n## Action items\n\n- Send the agenda.\n"
+      }
+    }
+  ]
+}

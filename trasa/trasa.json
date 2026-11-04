@@ -1,0 +1,58 @@
+{
+  "opis": "Stała trasa stanów okna (tryb Code, macOS). Kroki z 'opcjonalny' nie przerywają trasy; 'gdy' wykonuje krok tylko, gdy w oknie widać ten tekst. Rozmiar okna w punktach ekranu.",
+  "oczekiwaneStany": ["start", "pusta", "rozmowa", "zgoda-narzedzia", "po-narzedziu", "zgoda-edycji"],
+  "kroki": [
+    { "krok": "uruchom", "s": 180 },
+    { "krok": "czekaj", "s": 15 },
+    { "krok": "dostepnosc", "opcjonalny": true },
+    { "krok": "okno", "w": 1440, "h": 900 },
+    { "krok": "czekaj", "s": 3 },
+    { "krok": "ekran", "nazwa": "01-start", "opcjonalny": true },
+    { "krok": "drzewo", "nazwa": "01-start", "opcjonalny": true },
+    { "krok": "zrzut", "stan": "start", "opis": "Okno zaraz po uruchomieniu" },
+
+    { "krok": "klik", "tekst": ["Continue", "Get started", "Start", "Skip"], "dokladnie": true, "opcjonalny": true },
+    { "krok": "czekaj", "s": 3 },
+    { "krok": "klik", "tekst": "Code", "dokladnie": true, "opcjonalny": true },
+    { "krok": "czekaj", "s": 5 },
+    { "krok": "ekran", "nazwa": "02-code", "opcjonalny": true },
+    { "krok": "drzewo", "nazwa": "02-code", "opcjonalny": true },
+
+    { "krok": "klik", "tekst": ["Select folder", "Choose folder", "Open folder", "Choose a folder", "Select a folder"], "opcjonalny": true },
+    { "krok": "czekaj", "s": 3 },
+    { "krok": "drzewo", "nazwa": "03-wybor-folderu", "opcjonalny": true },
+    { "krok": "klawisz", "klucz": "g", "z": ["command", "shift"], "gdy": ["Open", "Cancel"], "opcjonalny": true },
+    { "krok": "czekaj", "s": 1 },
+    { "krok": "pisz", "tekst": "~/notes", "gdy": "Go to the folder", "opcjonalny": true },
+    { "krok": "klawisz", "klucz": "enter", "gdy": "Go to the folder", "opcjonalny": true },
+    { "krok": "czekaj", "s": 1 },
+    { "krok": "klawisz", "klucz": "enter", "gdy": ["Open", "Cancel"], "opcjonalny": true },
+    { "krok": "czekaj", "s": 3 },
+    { "krok": "klik", "tekst": ["Trust", "Yes, I trust", "Trust folder"], "opcjonalny": true },
+    { "krok": "czekaj", "s": 3 },
+    { "krok": "ekran", "nazwa": "04-sesja", "opcjonalny": true },
+    { "krok": "drzewo", "nazwa": "04-sesja", "opcjonalny": true },
+    { "krok": "zrzut", "stan": "pusta", "opis": "Nowa sesja Code z wybranym folderem notes", "opcjonalny": true },
+
+    { "krok": "pisz", "tekst": "What is in this folder?", "opcjonalny": true },
+    { "krok": "klawisz", "klucz": "enter", "opcjonalny": true },
+    { "krok": "czekajNa", "tekst": "This folder holds your meeting notes", "s": 90, "opcjonalny": true },
+    { "krok": "zrzut", "stan": "rozmowa", "opis": "Odpowiedź tekstowa w rozmowie", "s": 3, "opcjonalny": true },
+
+    { "krok": "pisz", "tekst": "Please list the notes.", "opcjonalny": true },
+    { "krok": "klawisz", "klucz": "enter", "opcjonalny": true },
+    { "krok": "czekajNa", "tekst": ["Allow once", "Allow"], "s": 60, "opcjonalny": true },
+    { "krok": "zrzut", "stan": "zgoda-narzedzia", "opis": "Karta zgody na komendę (Bash)", "s": 2, "opcjonalny": true },
+    { "krok": "drzewo", "nazwa": "05-zgoda-narzedzia", "opcjonalny": true },
+    { "krok": "klik", "tekst": ["Allow once", "Allow"], "opcjonalny": true },
+    { "krok": "czekajNa", "tekst": "I added a Summary section", "s": 60, "opcjonalny": true },
+    { "krok": "zrzut", "stan": "po-narzedziu", "opis": "Odpowiedź po wykonaniu komendy", "s": 3, "opcjonalny": true },
+
+    { "krok": "pisz", "tekst": "Write a summary note.", "opcjonalny": true },
+    { "krok": "klawisz", "klucz": "enter", "opcjonalny": true },
+    { "krok": "czekajNa", "tekst": ["Allow once", "Allow", "Accept"], "s": 60, "opcjonalny": true },
+    { "krok": "zrzut", "stan": "zgoda-edycji", "opis": "Karta zgody na utworzenie pliku (Write)", "s": 2, "opcjonalny": true },
+    { "krok": "drzewo", "nazwa": "06-zgoda-edycji", "opcjonalny": true },
+    { "krok": "ekran", "nazwa": "06-koniec", "opcjonalny": true }
+  ]
+}

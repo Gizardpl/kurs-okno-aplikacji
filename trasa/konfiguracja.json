@@ -1,0 +1,18 @@
+{
+  "opis": "Konfiguracja trybu bez konta Anthropic (Claude Desktop on 3P, bramka). Klucze z https://claude.com/docs/third-party/claude-desktop/configuration.md; w preferencjach macOS każda wartość jest napisem. Klucz bramki to zmyślony napis: atrapa działa tylko lokalnie i niczego nie sprawdza.",
+  "domena": "com.anthropic.claudefordesktop",
+  "klucze": {
+    "inferenceProvider": "gateway",
+    "inferenceGatewayBaseUrl": "http://127.0.0.1:8787",
+    "inferenceGatewayApiKey": "atrapa-bez-uprawnien",
+    "inferenceModels": "[\"claude-opus-5-5\",\"claude-sonnet-5\",\"claude-haiku-4-5\"]",
+    "deploymentMode": "3p",
+    "disableDeploymentModeChooser": "true",
+    "isClaudeCodeForDesktopEnabled": "true",
+    "autoModeEnabled": "false",
+    "disableAutoUpdates": "true",
+    "disableFeatureDiscovery": "true",
+    "disableEssentialTelemetry": "true",
+    "disableNonessentialTelemetry": "true"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "kurs-okno-aplikacji",
+  "private": true,
+  "description": "Zrzuty i nagranie okna aplikacji desktopowej w trybie bez konta oraz raport różnic względem poprzedniego przebiegu",
+  "license": "MIT",
+  "dependencies": {
+    "pixelmatch": "5.3.0",
+    "pngjs": "7.0.0"
+  }
+}

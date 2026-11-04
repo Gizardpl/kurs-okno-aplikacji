@@ -1,0 +1,226 @@
+# Zrzuty i nagranie okna aplikacji Claude Desktop (tryb bez konta, lokalna atrapa bramki) oraz raport różnic
+# względem poprzedniego przebiegu. Codziennie sprawdza numer najnowszej wersji; pełny przebieg na macOS tylko przy
+# nowej wersji, przy starym albo brakującym punkcie odniesienia, albo po uruchomieniu ręcznym. Opis: README.md.
+# Bez sekretów. Repo publiczne i standardowe runnery: bez opłat.
+name: okno-aplikacji
+
+on:
+  schedule:
+    - cron: "37 6 * * *"
+  workflow_dispatch:
+    inputs:
+      zamaluj:
+        description: "Próba porównania: zamaluj fragment wzorca, np. rozmowa:100,100,200,80 (puste = zwykły przebieg)"
+        required: false
+        default: ""
+      diagnostyka:
+        description: "Wgraj też diagnostykę i nagranie (tylko na pierwsze przebiegi i do szukania błędów trasy; 3 dni)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: okno-aplikacji
+  cancel-in-progress: false
+
+jobs:
+  wersja:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      wersja: ${{ steps.najnowsza.outputs.wersja }}
+      pelny: ${{ steps.decyzja.outputs.pelny }}
+      powod: ${{ steps.decyzja.outputs.powod }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: najnowsza
+        name: Najnowsza wersja z oficjalnego adresu instalatora
+        run: node wersja/wersja.js
+      - id: decyzja
+        name: Punkt odniesienia i decyzja
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node wersja/odniesienie.js "${{ steps.najnowsza.outputs.wersja }}" "$RUNNER_TEMP/odniesienie"
+      - name: Podsumowanie
+        env:
+          POWOD: ${{ steps.decyzja.outputs.powod }}
+        run: echo "Wersja ${{ steps.najnowsza.outputs.wersja }}; pełny przebieg ${{ steps.decyzja.outputs.pelny }} ($POWOD)" >> "$GITHUB_STEP_SUMMARY"
+
+  nagranie:
+    needs: wersja
+    if: needs.wersja.outputs.pelny == 'true'
+    runs-on: macos-15
+    timeout-minutes: 25
+    env:
+      WYNIK: ${{ github.workspace }}/../wynik
+      APLIKACJA: /Applications/Claude.app
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Instalator z oficjalnego adresu i sprawdzenie podpisu
+        id: instalacja
+        run: |
+          set -euo pipefail
+          ADRES="$(node -p 'require("./wersja/wersja").ADRES')"
+          KOD="$(curl -sS -o /dev/null -w '%{http_code}' "$ADRES" || true)"
+          echo "Odpowiedź adresu instalatora: HTTP $KOD"
+          case "$KOD" in 30[1278]) ;; *) echo "::error::oficjalny adres instalatora wymaga przeglądarki albo ochrony przed botami (HTTP $KOD)"; exit 1 ;; esac
+          curl -fsSL --proto '=https' --tlsv1.2 -o "$RUNNER_TEMP/Claude.dmg" "$ADRES" || { echo "::error::pobranie instalatora z oficjalnego adresu nie powiodło się (cel przekierowania odmówił; bez drugiej drogi)"; exit 1; }
+          hdiutil attach -nobrowse -readonly -mountpoint "$RUNNER_TEMP/dmg" "$RUNNER_TEMP/Claude.dmg"
+          ditto "$RUNNER_TEMP/dmg/Claude.app" "$APLIKACJA"
+          hdiutil detach "$RUNNER_TEMP/dmg"
+          codesign --verify --deep --strict "$APLIKACJA"
+          codesign -dv --verbose=2 "$APLIKACJA" 2>&1 | grep -E '^(Authority|TeamIdentifier|Identifier)=' | tee "$RUNNER_TEMP/podpis.txt"
+          grep -qx 'TeamIdentifier=Q6L2SF6YDW' "$RUNNER_TEMP/podpis.txt"
+          spctl -a -t exec -vv "$APLIKACJA"
+          echo "wersja=$(defaults read "$APLIKACJA/Contents/Info" CFBundleShortVersionString)" >> "$GITHUB_OUTPUT"
+      - name: Konfiguracja trybu bez konta i zmyślony katalog notatek
+        run: node trasa/konfiguruj.js trasa/konfiguracja.json "$HOME"
+      - name: Atrapa bramki modelu (lokalnie, 127.0.0.1)
+        run: |
+          mkdir -p "$WYNIK/diagnostyka"
+          nohup node bramka/serwer.js --port 8787 --dziennik "$WYNIK/diagnostyka/bramka.jsonl" > "$RUNNER_TEMP/bramka.log" 2>&1 &
+          for i in $(seq 1 30); do curl -fsS http://127.0.0.1:8787/v1/models > /dev/null && exit 0; sleep 1; done
+          cat "$RUNNER_TEMP/bramka.log"; exit 1
+      - name: Trasa stanów okna (zrzuty i nagranie)
+        env:
+          WERSJA: ${{ needs.wersja.outputs.wersja }}
+          WERSJA_APLIKACJI: ${{ steps.instalacja.outputs.wersja }}
+          PRZEBIEG: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/nagranie"
+          node trasa/uruchom.js --trasa trasa/trasa.json --wyjscie "$WYNIK" --aplikacja "$APLIKACJA" --proces Claude \
+            --wersja "$WERSJA" --wersja-aplikacji "$WERSJA_APLIKACJI" --przebieg "$PRZEBIEG" --nagranie "$RUNNER_TEMP/nagranie/nagranie.mov"
+      - name: Diagnostyka (tylko na żądanie; wybrane pliki, bez całych katalogów logów)
+        if: always() && inputs.diagnostyka == true
+        run: |
+          mkdir -p "$WYNIK/diagnostyka/logi"
+          cp "$HOME/Library/Logs/Claude-3p/main.log" "$WYNIK/diagnostyka/logi/claude-3p-main.log" 2>/dev/null || true
+          cp "$HOME/Library/Logs/Claude/main.log" "$WYNIK/diagnostyka/logi/claude-main.log" 2>/dev/null || true
+      # Kontrola prywatności PRZED wgraniem czegokolwiek (artefakty repo publicznego pobiera każdy zalogowany): OCR zrzutów
+      # i obrazów diagnostyki, tekst logów, drzewa dostępności i dziennika bramki. Trafienie = nic nie zostaje wgrane.
+      # Nagrania (.mov) OCR nie czyta: wgrywa się tylko na żądanie i pokazuje ten sam ekran co sprawdzone zrzuty.
+      - name: Kontrola prywatności przed wgraniem
+        id: prywatnosc
+        if: always()
+        env:
+          DIAGNOSTYKA: ${{ inputs.diagnostyka == true }}
+        run: |
+          set -euo pipefail
+          brew install tesseract > /dev/null
+          mkdir -p "$RUNNER_TEMP/pryw/obrazy"
+          if [ -d "$WYNIK/zrzuty" ]; then cp -R "$WYNIK/zrzuty" "$RUNNER_TEMP/pryw/obrazy/zrzuty"; fi
+          if [ -f "$WYNIK/meta.json" ]; then
+            mkdir -p "$RUNNER_TEMP/pryw/meta" && cp "$WYNIK/meta.json" "$RUNNER_TEMP/pryw/meta/"
+            node prywatnosc/sprawdz.js --teksty "$RUNNER_TEMP/pryw/meta" --wyjscie "$RUNNER_TEMP/pryw/meta-wynik"
+          fi
+          if [ "$DIAGNOSTYKA" = "true" ] && [ -d "$WYNIK/diagnostyka" ]; then
+            mkdir -p "$RUNNER_TEMP/pryw/obrazy/diagnostyka"
+            find "$WYNIK/diagnostyka" -name '*.png' -exec cp {} "$RUNNER_TEMP/pryw/obrazy/diagnostyka/" \;
+            if [ -n "$(find "$WYNIK/diagnostyka" -type f \( -name '*.log' -o -name '*.json' -o -name '*.jsonl' -o -name '*.txt' \) | head -1)" ]; then
+              node prywatnosc/sprawdz.js --teksty "$WYNIK/diagnostyka" --wyjscie "$RUNNER_TEMP/pryw/teksty"
+            fi
+          fi
+          # Trasa padła przed pierwszym zrzutem: nie ma obrazów do OCR, a logi przeszły już kontrolę tekstu wyżej.
+          if [ -n "$(find "$RUNNER_TEMP/pryw/obrazy" -name '*.png' | head -1)" ]; then
+            node prywatnosc/sprawdz.js --zrzuty "$RUNNER_TEMP/pryw/obrazy" --wyjscie "$RUNNER_TEMP/pryw/ocr"
+          fi
+      - name: Artefakt „zrzuty” (punkt odniesienia dla kolejnych przebiegów)
+        if: steps.prywatnosc.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: zrzuty
+          path: |
+            ${{ env.WYNIK }}/meta.json
+            ${{ env.WYNIK }}/zrzuty
+          retention-days: 30
+          if-no-files-found: error
+      - name: Artefakt „diagnostyka” (na żądanie)
+        if: always() && inputs.diagnostyka == true && steps.prywatnosc.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: diagnostyka
+          path: |
+            ${{ env.WYNIK }}/diagnostyka
+            ${{ env.WYNIK }}/meta.json
+          retention-days: 3
+          if-no-files-found: warn
+      - name: Artefakt „nagranie” (na żądanie)
+        if: always() && inputs.diagnostyka == true && steps.prywatnosc.outcome == 'success'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: nagranie
+          path: ${{ runner.temp }}/nagranie
+          retention-days: 3
+          if-no-files-found: warn
+
+  raport:
+    needs: [wersja, nagranie]
+    if: needs.nagranie.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Zrzuty tego przebiegu
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: zrzuty
+          path: ${{ runner.temp }}/po
+      - name: Punkt odniesienia (artefakt „zrzuty” poprzedniego przebiegu)
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node wersja/odniesienie.js "-" "$RUNNER_TEMP/przed"
+      - name: Porównanie
+        env:
+          ZAMALUJ: ${{ inputs.zamaluj }}
+        run: |
+          node porownanie/porownaj.js --po "$RUNNER_TEMP/po" --przed "$RUNNER_TEMP/przed" --wyjscie "$RUNNER_TEMP/raport" --zamaluj "$ZAMALUJ"
+          cat "$RUNNER_TEMP/raport/raport.md" >> "$GITHUB_STEP_SUMMARY"
+      - name: Kontrola prywatności (OCR)
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq tesseract-ocr > /dev/null
+          tesseract --version | head -1
+          mkdir -p "$RUNNER_TEMP/do-ocr"
+          cp -R "$RUNNER_TEMP/po/zrzuty" "$RUNNER_TEMP/do-ocr/zrzuty"
+          node prywatnosc/sprawdz.js --zrzuty "$RUNNER_TEMP/do-ocr" --wyjscie "$RUNNER_TEMP/raport" | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Artefakt „raport”
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: raport
+          path: ${{ runner.temp }}/raport
+          retention-days: 14
+          if-no-files-found: warn
+
+  # Harmonogram w repo publicznym wyłącza się po 60 dniach bez aktywności w repo. Gdy ostatni commit ma ponad 45 dni,
+  # ten job dopisuje datę sprawdzenia do pliku. To jedyny zapis do repo w całym workflow.
+  podtrzymanie:
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Zapis daty, gdy repo nie miało aktywności od 45 dni
+        run: |
+          OSTATNI="$(git log -1 --format=%ct)"
+          if [ $(( $(date +%s) - OSTATNI )) -lt $(( 45 * 86400 )) ]; then echo "Aktywność w repo jest świeża."; exit 0; fi
+          date -u +%Y-%m-%d > ostatnie-sprawdzenie.txt
+          git add ostatnie-sprawdzenie.txt
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" commit -m "Podtrzymanie harmonogramu"
+          git push
