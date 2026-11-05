@@ -1,0 +1,45 @@
+# Jeden system: okno wyboru folderu, kroki w nim, zrzuty i nagranie (wywoływany z okna-wyboru.yml). Bez sekretów, bez
+# zapisu do repo; artefakt z czystej maszyny runnera.
+name: okna-wyboru-zrzut
+
+on:
+  workflow_call:
+    inputs:
+      obraz:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  zrzut:
+    runs-on: ${{ inputs.obraz }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Ciemny motyw systemu (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Set-ItemProperty -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize -Name AppsUseLightTheme -Value 0 -Type Dword
+          Set-ItemProperty -Path HKCU:\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize -Name SystemUsesLightTheme -Value 0 -Type Dword
+      - name: Nagrywanie ekranu (Windows, ffmpeg)
+        if: runner.os == 'Windows'
+        continue-on-error: true
+        shell: pwsh
+        run: if (-not (Get-Command ffmpeg -ErrorAction SilentlyContinue)) { choco install ffmpeg -y --no-progress }
+      - name: Electron
+        run: npm install --no-save --no-package-lock electron@45.2.3
+      - name: Okno wyboru folderu, kroki, zrzuty i nagranie
+        env:
+          OKNA_WYJSCIE: ${{ runner.temp }}/zrzuty
+        run: npx --no-install electron okna-wyboru/main.js
+      - if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: okno-wyboru-${{ inputs.obraz }}
+          path: ${{ runner.temp }}/zrzuty
+          retention-days: 7
