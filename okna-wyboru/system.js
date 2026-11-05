@@ -86,43 +86,44 @@ function krokiWyboru(tytul) {
       : `if ($s.ToString() -ne '${t}') { throw ('fokus utracony w trakcie zmiany nazwy, na wierzchu: ' + $s.ToString()) }`,
     `if ($s.ToString() -ne '${t}') { throw ('na wierzchu inne okno: ' + $s.ToString()) }`,
   ].join('; ');
-  const sk = (klawisze, { naWierzch = false, naprawa = true } = {}) => () => execFileSync('powershell', ['-NoProfile', '-Command', [
+  // Pole zmiany nazwy nowego folderu pojawia się z opóźnieniem: na Windows 11 ARM pierwsze litery „notes” trafiły, zanim pole
+  // było gotowe (przebieg 42068949887: folder „es”). Przed pisaniem czekamy (do 10 s), aż fokus ma kontrolka klasy Edit
+  // (GetGUIThreadInfo wątku okna na wierzchu).
+  const czekajNaPole = [
+    "Add-Type -TypeDefinition 'using System; using System.Runtime.InteropServices; using System.Text; public static class Pole { [StructLayout(LayoutKind.Sequential)] public struct RECT { public int l, t, r, b; } [StructLayout(LayoutKind.Sequential)] public struct GTI { public int cb; public int flags; public IntPtr active, focus, capture, menu, move, caret; public RECT rc; } [DllImport(\"user32.dll\")] static extern bool GetGUIThreadInfo(uint id, ref GTI g); [DllImport(\"user32.dll\", CharSet=CharSet.Unicode)] static extern int GetClassName(IntPtr h, StringBuilder s, int n); public static string Klasa() { GTI g = new GTI(); g.cb = Marshal.SizeOf(typeof(GTI)); if (!GetGUIThreadInfo(0, ref g) || g.focus == IntPtr.Zero) return \"\"; StringBuilder s = new StringBuilder(64); GetClassName(g.focus, s, 64); return s.ToString(); } }'",
+    '$k = ""; for ($i = 0; $i -lt 50; $i++) { $k = [Pole]::Klasa(); if ($k -eq "Edit") { break }; Start-Sleep -Milliseconds 200 }',
+    "if ($k -ne 'Edit') { throw ('pole nazwy niegotowe, fokus w: ' + $k) }",
+    'Start-Sleep -Milliseconds 300',
+  ].join('; ');
+  const sk = (klawisze, { naWierzch = false, naprawa = true, pole = false } = {}) => () => execFileSync('powershell', ['-NoProfile', '-Command', [
     '$w = New-Object -ComObject WScript.Shell',
     // AppActivate bywa odrzucone przez blokadę fokusu (Windows 11, przebieg 42037600320); decyduje sprawdzenie tytułu niżej.
     naWierzch ? `$null = $w.AppActivate('${t}'); Start-Sleep -Milliseconds 300` : '',
     naWierzchu(naprawa),
+    pole ? czekajNaPole : '',
     ...klawisze.map((k) => `$w.SendKeys(${k}); Start-Sleep -Milliseconds 400`),
   ].filter(Boolean).join('; ')], LIMIT);
-  // Wybór jak kliknięcie przycisku „Select Folder” (przycisk OK okna, identyfikator 1) przez UI Automation: klawisz
-  // zatwierdzenia w liście otwiera zaznaczony folder, a wewnątrz pole „Folder: notes” wskazuje nieistniejący notes\notes.
-  // Asynchronicznie: zapytania o przycisk obsługuje główny wątek Electrona, a execFileSync go blokował (przebieg 42043191310:
-  // przekroczony limit na obu obrazach Windows).
+  // Wybór jak kliknięcie przycisku „Select Folder”: klawisz zatwierdzenia w liście otwiera zaznaczony folder, a wewnątrz pole
+  // „Folder: notes” wskazuje nieistniejący notes\notes. Przycisk to kontrolka okna dialogowego o identyfikatorze 1 (IDOK):
+  // okno dialogowe po tytule (klasa #32770), przycisk przez GetDlgItem, a wybór to WM_COMMAND z IDOK i BN_CLICKED do okna,
+  // czyli to samo, co okno dostaje po kliknięciu. Przeszukanie drzewa dostępności nie widzi tego przycisku (przebieg
+  // 42068949887: na Windows 11 i Server 2025 lista przycisków bez „Select Folder”). Asynchronicznie: okno obsługuje główny
+  // wątek Electrona, a execFileSync go blokował (przebieg 42043191310).
   const wybierz = () => promisify(execFile)('powershell', ['-NoProfile', '-Command', [
-    'Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes',
-    '$A = [System.Windows.Automation.AutomationElement]',
-    // Okno wyboru wśród okien najwyższego poziomu albo okien przez nie posiadanych (dwa poziomy Children): przeszukanie
-    // całego pulpitu (Descendants) trwało ponad 30 s (przebieg 42041631432).
-    '$S = [System.Windows.Automation.TreeScope]::Children',
-    `$jak = New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, '${t}')`,
-    '$okno = $A::RootElement.FindFirst($S, $jak)',
-    'if (-not $okno) { foreach ($g in $A::RootElement.FindAll($S, [System.Windows.Automation.Condition]::TrueCondition)) { $okno = $g.FindFirst($S, $jak); if ($okno) { break } } }',
-    "if (-not $okno) { throw 'brak okna wyboru' }",
-    // Przycisk OK: najpierw po nazwie „Select Folder”, potem identyfikator 1, w obu razach tylko Button albo SplitButton z
-    // wzorcem Invoke (przebieg 42054326729: identyfikator 1 z typem Button nie znalazł go na Server 2025; element listy
-    // plików z identyfikatorem 1 otworzyłby folder zamiast go wybrać). Brak przycisku: w błędzie lista przycisków okna.
-    '$D = [System.Windows.Automation.TreeScope]::Descendants',
-    '$P = [System.Windows.Automation.InvokePattern]::Pattern',
-    '$T = [System.Windows.Automation.ControlType]',
-    "$przyciski = @($okno.FindAll($D, (New-Object System.Windows.Automation.OrCondition((New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, $T::Button)), (New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, $T::SplitButton))))))",
-    "$ok = $null; foreach ($pasuje in @({ $args[0].Current.Name -eq 'Select Folder' }, { $args[0].Current.AutomationId -eq '1' })) { foreach ($e in $przyciski) { $wz = $null; if ((& $pasuje $e) -and $e.TryGetCurrentPattern($P, [ref]$wz)) { $ok = $wz; break } }; if ($ok) { break } }",
-    "if (-not $ok) { throw ('przyciski: ' + (($przyciski | ForEach-Object { $_.Current.Name + '#' + $_.Current.AutomationId + '#' + $_.Current.ControlType.ProgrammaticName }) -join ', ') + '; brak przycisku Select Folder') }",
-    '$ok.Invoke()',
+    "Add-Type -Name Dlg -Namespace W -MemberDefinition '[DllImport(\"user32.dll\", CharSet=CharSet.Unicode)] public static extern System.IntPtr FindWindow(string c, string t); [DllImport(\"user32.dll\")] public static extern System.IntPtr GetDlgItem(System.IntPtr h, int id); [DllImport(\"user32.dll\", CharSet=CharSet.Unicode)] public static extern int GetWindowText(System.IntPtr h, System.Text.StringBuilder s, int n); [DllImport(\"user32.dll\")] public static extern bool PostMessage(System.IntPtr h, uint m, System.IntPtr w, System.IntPtr l);'",
+    `$okno = [W.Dlg]::FindWindow('#32770', '${t}')`,
+    "if ($okno -eq [System.IntPtr]::Zero) { throw 'brak okna wyboru' }",
+    '$ok = [W.Dlg]::GetDlgItem($okno, 1)',
+    "if ($ok -eq [System.IntPtr]::Zero) { throw 'brak przycisku o identyfikatorze 1' }",
+    '$s = New-Object System.Text.StringBuilder 128; $null = [W.Dlg]::GetWindowText($ok, $s, 128)',
+    "if ($s.ToString() -notmatch 'Select Folder') { throw ('przycisk 1 to nie Select Folder: ' + $s.ToString()) }",
+    'if (-not [W.Dlg]::PostMessage($okno, 0x0111, [System.IntPtr]1, $ok)) { throw \'WM_COMMAND nie wysłany\' }',
   ].join('; ')], LIMIT);
   const tekst = (s) => `'${s.replace(/'/g, "''")}'`;
   return [
     ['pulpit', sk([tekst('%d'), "([Environment]::GetFolderPath('Desktop') -replace '[+^%~(){}]', '{$0}')", tekst('~')], { naWierzch: true })],
     ['nowy-folder', sk([tekst('^+n')])],
-    ['nazwa', sk([tekst('notes')], { naprawa: false })],
+    ['nazwa', sk([tekst('notes')], { naprawa: false, pole: true })],
     ['utworzony', sk([tekst('~')], { naprawa: false })],
     ['wybrany', wybierz],
   ];
