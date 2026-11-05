@@ -87,7 +87,12 @@ function krokiWyboru(tytul) {
   const wybierz = () => execFileSync('powershell', ['-NoProfile', '-Command', [
     'Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes',
     '$A = [System.Windows.Automation.AutomationElement]',
-    `$okno = $A::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, '${t}')))`,
+    // Okno wyboru wśród okien najwyższego poziomu albo okien przez nie posiadanych (dwa poziomy Children): przeszukanie
+    // całego pulpitu (Descendants) trwało ponad 30 s (przebieg 42041631432).
+    '$S = [System.Windows.Automation.TreeScope]::Children',
+    `$jak = New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, '${t}')`,
+    '$okno = $A::RootElement.FindFirst($S, $jak)',
+    'if (-not $okno) { foreach ($g in $A::RootElement.FindAll($S, [System.Windows.Automation.Condition]::TrueCondition)) { $okno = $g.FindFirst($S, $jak); if ($okno) { break } } }',
     "if (-not $okno) { throw 'brak okna wyboru' }",
     "$ok = $okno.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition($A::AutomationIdProperty, '1')))",
     "if (-not $ok) { throw 'brak przycisku Select Folder' }",

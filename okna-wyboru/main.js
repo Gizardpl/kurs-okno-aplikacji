@@ -15,7 +15,8 @@ const TYTUL = 'Select folder for local session';
 const PO_KROKU_MS = 1500;
 const NAGRANIE_S = 90; // górna granica; nagranie kończy się zaraz po ostatnim kroku
 const czekaj = (ms) => new Promise((ok) => setTimeout(ok, ms));
-const blad = (e) => `błąd: ${String(e && e.message).slice(0, 300)}`;
+// Koniec komunikatu (treść błędu ze skryptu), nie początek (sama komenda): przebieg 42041631432 ucinał przyczynę.
+const blad = (e) => `błąd: ${String(e && e.message).trim().slice(-300)}`;
 
 /** Krok do wyniku: „ok” albo treść błędu; błąd jednego kroku nie przerywa następnych. */
 function krok(wynik, nazwa, f) {
