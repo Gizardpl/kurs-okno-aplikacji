@@ -2,7 +2,8 @@
 // Narzędzia systemu dla okna wyboru folderu: zdjęcie ekranu, nagranie w tle i naciśnięcia klawiszy w oknie wyboru.
 // macOS: screencapture i System Events (osascript); Windows: .NET CopyFromScreen, ffmpeg gdigrab i WScript.Shell SendKeys.
 // Każda komenda ma limit czasu: zawieszenie (np. czekanie na zgodę systemu) kończy się błędem kroku, nie zawiesza joba.
-const { execFileSync, spawn } = require('node:child_process');
+const { execFile, execFileSync, spawn } = require('node:child_process');
+const { promisify } = require('node:util');
 
 const LIMIT = { timeout: 30000, killSignal: 'SIGKILL' };
 const MAC = process.platform === 'darwin';
@@ -38,11 +39,12 @@ function nagranieWTle(plikBez, maksS) {
     p.on('error', () => { clearTimeout(straz); ok(-1); });
     p.on('exit', (kod) => { clearTimeout(straz); ok(kod); });
   });
-  // Gdy proces nie zareaguje na znak na wejściu w 5 s, SIGINT (screencapture i ffmpeg zamykają wtedy plik poprawnie);
-  // SIGKILL ze strażnika zostaje ostatnią deską.
+  p.stdin.on('error', () => { /* proces skończył sam (-t), zapis do zamkniętej rury bez znaczenia */ });
+  // macOS: gdy screencapture nie zareaguje na znak w 5 s, SIGINT (zamyka plik). Windows bez SIGINT: Node zabija tam proces
+  // od razu, jak SIGKILL, a ffmpeg po „q” może potrzebować dłużej na opróżnienie bufora; czeka strażnik.
   const zakoncz = () => {
     try { p.stdin.write(MAC ? 'x' : 'q'); p.stdin.end(); } catch { /* proces już zakończony */ }
-    const przerwij = setTimeout(() => { try { p.kill('SIGINT'); } catch { /* już zakończony */ } }, 5000);
+    const przerwij = MAC ? setTimeout(() => { try { p.kill('SIGINT'); } catch { /* już zakończony */ } }, 5000) : null;
     return koniec.then((kod) => { clearTimeout(przerwij); return kod; });
   };
   return { plik, zakoncz };
@@ -84,7 +86,9 @@ function krokiWyboru(tytul) {
   ].filter(Boolean).join('; ')], LIMIT);
   // Wybór jak kliknięcie przycisku „Select Folder” (przycisk OK okna, identyfikator 1) przez UI Automation: klawisz
   // zatwierdzenia w liście otwiera zaznaczony folder, a wewnątrz pole „Folder: notes” wskazuje nieistniejący notes\notes.
-  const wybierz = () => execFileSync('powershell', ['-NoProfile', '-Command', [
+  // Asynchronicznie: zapytania o przycisk obsługuje główny wątek Electrona, a execFileSync go blokował (przebieg 42043191310:
+  // przekroczony limit na obu obrazach Windows).
+  const wybierz = () => promisify(execFile)('powershell', ['-NoProfile', '-Command', [
     'Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes',
     '$A = [System.Windows.Automation.AutomationElement]',
     // Okno wyboru wśród okien najwyższego poziomu albo okien przez nie posiadanych (dwa poziomy Children): przeszukanie
@@ -94,7 +98,7 @@ function krokiWyboru(tytul) {
     '$okno = $A::RootElement.FindFirst($S, $jak)',
     'if (-not $okno) { foreach ($g in $A::RootElement.FindAll($S, [System.Windows.Automation.Condition]::TrueCondition)) { $okno = $g.FindFirst($S, $jak); if ($okno) { break } } }',
     "if (-not $okno) { throw 'brak okna wyboru' }",
-    "$ok = $okno.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition($A::AutomationIdProperty, '1')))",
+    "$ok = $okno.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.AndCondition((New-Object System.Windows.Automation.PropertyCondition($A::AutomationIdProperty, '1')), (New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)))))",
     "if (-not $ok) { throw 'brak przycisku Select Folder' }",
     '$ok.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()',
   ].join('; ')], LIMIT);

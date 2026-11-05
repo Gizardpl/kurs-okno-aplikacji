@@ -18,14 +18,14 @@ const czekaj = (ms) => new Promise((ok) => setTimeout(ok, ms));
 // Koniec komunikatu (treść błędu ze skryptu), nie początek (sama komenda): przebieg 42041631432 ucinał przyczynę.
 const blad = (e) => `błąd: ${String(e && e.message).trim().slice(-300)}`;
 
-/** Krok do wyniku: „ok” albo treść błędu; błąd jednego kroku nie przerywa następnych. */
-function krok(wynik, nazwa, f) {
-  try { f(); wynik[nazwa] = 'ok'; } catch (e) { wynik[nazwa] = blad(e); }
+/** Krok do wyniku: „ok” albo treść błędu; błąd jednego kroku nie przerywa następnych. Krok może zwrócić obietnicę. */
+async function krok(wynik, nazwa, f) {
+  try { await f(); wynik[nazwa] = 'ok'; } catch (e) { wynik[nazwa] = blad(e); }
 }
 
-function stan(wynik, nr, nazwa) {
+async function stan(wynik, nr, nazwa) {
   const plik = path.join(WYJSCIE, `${process.platform}-${String(nr).padStart(2, '0')}-${nazwa}.png`);
-  krok(wynik, `zrzut ${nazwa}`, () => { zrzut(plik); if (!fs.statSync(plik).size) throw new Error('pusty plik'); });
+  await krok(wynik, `zrzut ${nazwa}`, () => { zrzut(plik); if (!fs.statSync(plik).size) throw new Error('pusty plik'); });
 }
 
 async function przebieg() {
@@ -47,22 +47,21 @@ async function przebieg() {
     })
     .catch((e) => { wynik.okno = blad(e); });
   await czekaj(2500);
-  stan(wynik, 0, 'start');
+  await stan(wynik, 0, 'start');
   let nr = 1;
   for (const [nazwa, f] of krokiWyboru(TYTUL)) {
     if ('wybrany folder' in wynik) break; // okno już zamknięte wyborem: dalsze klawisze trafiłyby w inne okno
-    krok(wynik, nazwa, f);
+    await krok(wynik, nazwa, f);
     await czekaj(PO_KROKU_MS);
-    stan(wynik, nr++, nazwa);
+    await stan(wynik, nr++, nazwa);
   }
   await Promise.race([wybor, czekaj(3000)]);
   await czekaj(1000);
   const kod = await nagranie.zakoncz();
   wynik.nagranie = kod === 0 && fs.existsSync(nagranie.plik) && fs.statSync(nagranie.plik).size ? 'ok' : `błąd: kod ${kod}`;
   fs.writeFileSync(path.join(WYJSCIE, `wynik-${process.platform}.json`), JSON.stringify(wynik, null, 2));
-  const cel = path.join(app.getPath('desktop'), FOLDER);
-  const norm = (p) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
-  const w = werdykt(wynik, fs.existsSync(cel) && wybranaSciezka !== null && norm(wybranaSciezka) === norm(cel));
+  const pulpit = app.getPath('desktop');
+  const w = werdykt(wynik, { wybrana: wybranaSciezka, pulpit, istnieje: fs.existsSync(path.join(pulpit, FOLDER)), platforma: process.platform });
   console.log(JSON.stringify(wynik));
   for (const p of w.powody) console.error(`NIEUDANY: ${p}`);
   return w.kod;
