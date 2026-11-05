@@ -72,16 +72,25 @@ function krokiWyboru(tytul) {
   // Pulpit przez pełną ścieżkę w pasku adresu („Desktop” prowadzi do wirtualnego katalogu powłoki, nie do folderu Pulpit).
   // Przed klawiszami sprawdzenie, że na wierzchu jest okno wyboru (tytuł okna z GetForegroundWindow); inaczej błąd kroku.
   const t = tytul.replace(/'/g, "''");
-  const naWierzchu = [
-    "Add-Type -Name Okno -Namespace W -MemberDefinition '[DllImport(\"user32.dll\")] public static extern System.IntPtr GetForegroundWindow(); [DllImport(\"user32.dll\", CharSet=CharSet.Unicode)] public static extern int GetWindowText(System.IntPtr h, System.Text.StringBuilder s, int n);'",
-    '$s = New-Object System.Text.StringBuilder 512; $null = [W.Okno]::GetWindowText([W.Okno]::GetForegroundWindow(), $s, 512)',
+  // Windows 11 ARM w trakcie kroków otwiera sam okno terminala z WSL („must be updated”, przebieg 42054326729): to okno
+  // czystej maszyny, nie nasze. Gdy jest na wierzchu, zamykamy tylko proces tego okna (pid z GetWindowThreadProcessId, gdy
+  // to wsl albo terminal) i wracamy do okna wyboru, ale tylko w krokach, w których ponowne AppActivate niczego nie psuje
+  // (przed nowym folderem). W trakcie zmiany nazwy pole nazwy jest już stracone: wtedy osobny błąd, bez dalszych klawiszy.
+  const tytulNaWierzchu = '$s.Clear() | Out-Null; $h = [W.Okno]::GetForegroundWindow(); $null = [W.Okno]::GetWindowText($h, $s, 512)';
+  const naWierzchu = (naprawa) => [
+    "Add-Type -Name Okno -Namespace W -MemberDefinition '[DllImport(\"user32.dll\")] public static extern System.IntPtr GetForegroundWindow(); [DllImport(\"user32.dll\", CharSet=CharSet.Unicode)] public static extern int GetWindowText(System.IntPtr h, System.Text.StringBuilder s, int n); [DllImport(\"user32.dll\")] public static extern uint GetWindowThreadProcessId(System.IntPtr h, out uint p);'",
+    '$s = New-Object System.Text.StringBuilder 512',
+    tytulNaWierzchu,
+    naprawa
+      ? `if ($s.ToString() -ne '${t}') { $p = 0; $null = [W.Okno]::GetWindowThreadProcessId($h, [ref]$p); $obcy = Get-Process -Id $p -ErrorAction SilentlyContinue; if ($obcy -and @('wsl', 'wslhost', 'WindowsTerminal', 'OpenConsole') -contains $obcy.ProcessName) { $obcy | Stop-Process -Force; Start-Sleep -Milliseconds 800; $null = (New-Object -ComObject WScript.Shell).AppActivate('${t}'); Start-Sleep -Milliseconds 300; ${tytulNaWierzchu} } }`
+      : `if ($s.ToString() -ne '${t}') { throw ('fokus utracony w trakcie zmiany nazwy, na wierzchu: ' + $s.ToString()) }`,
     `if ($s.ToString() -ne '${t}') { throw ('na wierzchu inne okno: ' + $s.ToString()) }`,
   ].join('; ');
-  const sk = (klawisze, naWierzch = false) => () => execFileSync('powershell', ['-NoProfile', '-Command', [
+  const sk = (klawisze, { naWierzch = false, naprawa = true } = {}) => () => execFileSync('powershell', ['-NoProfile', '-Command', [
     '$w = New-Object -ComObject WScript.Shell',
     // AppActivate bywa odrzucone przez blokadę fokusu (Windows 11, przebieg 42037600320); decyduje sprawdzenie tytułu niżej.
     naWierzch ? `$null = $w.AppActivate('${t}'); Start-Sleep -Milliseconds 300` : '',
-    naWierzchu,
+    naWierzchu(naprawa),
     ...klawisze.map((k) => `$w.SendKeys(${k}); Start-Sleep -Milliseconds 400`),
   ].filter(Boolean).join('; ')], LIMIT);
   // Wybór jak kliknięcie przycisku „Select Folder” (przycisk OK okna, identyfikator 1) przez UI Automation: klawisz
@@ -98,16 +107,23 @@ function krokiWyboru(tytul) {
     '$okno = $A::RootElement.FindFirst($S, $jak)',
     'if (-not $okno) { foreach ($g in $A::RootElement.FindAll($S, [System.Windows.Automation.Condition]::TrueCondition)) { $okno = $g.FindFirst($S, $jak); if ($okno) { break } } }',
     "if (-not $okno) { throw 'brak okna wyboru' }",
-    "$ok = $okno.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.AndCondition((New-Object System.Windows.Automation.PropertyCondition($A::AutomationIdProperty, '1')), (New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)))))",
-    "if (-not $ok) { throw 'brak przycisku Select Folder' }",
-    '$ok.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()',
+    // Przycisk OK: najpierw po nazwie „Select Folder”, potem identyfikator 1, w obu razach tylko Button albo SplitButton z
+    // wzorcem Invoke (przebieg 42054326729: identyfikator 1 z typem Button nie znalazł go na Server 2025; element listy
+    // plików z identyfikatorem 1 otworzyłby folder zamiast go wybrać). Brak przycisku: w błędzie lista przycisków okna.
+    '$D = [System.Windows.Automation.TreeScope]::Descendants',
+    '$P = [System.Windows.Automation.InvokePattern]::Pattern',
+    '$T = [System.Windows.Automation.ControlType]',
+    "$przyciski = @($okno.FindAll($D, (New-Object System.Windows.Automation.OrCondition((New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, $T::Button)), (New-Object System.Windows.Automation.PropertyCondition($A::ControlTypeProperty, $T::SplitButton))))))",
+    "$ok = $null; foreach ($pasuje in @({ $args[0].Current.Name -eq 'Select Folder' }, { $args[0].Current.AutomationId -eq '1' })) { foreach ($e in $przyciski) { $wz = $null; if ((& $pasuje $e) -and $e.TryGetCurrentPattern($P, [ref]$wz)) { $ok = $wz; break } }; if ($ok) { break } }",
+    "if (-not $ok) { throw ('przyciski: ' + (($przyciski | ForEach-Object { $_.Current.Name + '#' + $_.Current.AutomationId + '#' + $_.Current.ControlType.ProgrammaticName }) -join ', ') + '; brak przycisku Select Folder') }",
+    '$ok.Invoke()',
   ].join('; ')], LIMIT);
   const tekst = (s) => `'${s.replace(/'/g, "''")}'`;
   return [
-    ['pulpit', sk([tekst('%d'), "([Environment]::GetFolderPath('Desktop') -replace '[+^%~(){}]', '{$0}')", tekst('~')], true)],
+    ['pulpit', sk([tekst('%d'), "([Environment]::GetFolderPath('Desktop') -replace '[+^%~(){}]', '{$0}')", tekst('~')], { naWierzch: true })],
     ['nowy-folder', sk([tekst('^+n')])],
-    ['nazwa', sk([tekst('notes')])],
-    ['utworzony', sk([tekst('~')])],
+    ['nazwa', sk([tekst('notes')], { naprawa: false })],
+    ['utworzony', sk([tekst('~')], { naprawa: false })],
     ['wybrany', wybierz],
   ];
 }

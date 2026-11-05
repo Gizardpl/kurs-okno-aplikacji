@@ -16,7 +16,7 @@ const PO_KROKU_MS = 1500;
 const NAGRANIE_S = 90; // górna granica; nagranie kończy się zaraz po ostatnim kroku
 const czekaj = (ms) => new Promise((ok) => setTimeout(ok, ms));
 // Koniec komunikatu (treść błędu ze skryptu), nie początek (sama komenda): przebieg 42041631432 ucinał przyczynę.
-const blad = (e) => `błąd: ${String(e && e.message).trim().slice(-300)}`;
+const blad = (e) => `błąd: ${String(e && e.message).trim().slice(-800)}`;
 
 /** Krok do wyniku: „ok” albo treść błędu; błąd jednego kroku nie przerywa następnych. Krok może zwrócić obietnicę. */
 async function krok(wynik, nazwa, f) {
