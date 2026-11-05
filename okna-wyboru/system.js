@@ -74,8 +74,7 @@ function krokiWyboru(tytul) {
   const t = tytul.replace(/'/g, "''");
   // Windows 11 ARM w trakcie kroków otwiera sam okno terminala z WSL („must be updated”, przebieg 42054326729): to okno
   // czystej maszyny, nie nasze. Gdy jest na wierzchu, zamykamy tylko proces tego okna (pid z GetWindowThreadProcessId, gdy
-  // to wsl albo terminal) i wracamy do okna wyboru (do trzech prób AppActivate: przebieg 42070530814 na Windows 11 zostawił
-  // na wierzchu okno aplikacji zamiast okna wyboru), ale tylko w krokach, w których ponowne AppActivate niczego nie psuje
+  // to wsl albo terminal) i wracamy do okna wyboru, ale tylko w krokach, w których ponowne AppActivate niczego nie psuje
   // (przed nowym folderem). W trakcie zmiany nazwy pole nazwy jest już stracone: wtedy osobny błąd, bez dalszych klawiszy.
   const tytulNaWierzchu = '$s.Clear() | Out-Null; $h = [W.Okno]::GetForegroundWindow(); $null = [W.Okno]::GetWindowText($h, $s, 512)';
   const naWierzchu = (naprawa) => [
@@ -83,7 +82,7 @@ function krokiWyboru(tytul) {
     '$s = New-Object System.Text.StringBuilder 512',
     tytulNaWierzchu,
     naprawa
-      ? `if ($s.ToString() -ne '${t}') { $p = 0; $null = [W.Okno]::GetWindowThreadProcessId($h, [ref]$p); $obcy = Get-Process -Id $p -ErrorAction SilentlyContinue; if ($obcy -and @('wsl', 'wslhost', 'WindowsTerminal', 'OpenConsole') -contains $obcy.ProcessName) { $obcy | Stop-Process -Force; Start-Sleep -Milliseconds 800 }; for ($i = 0; $i -lt 3 -and $s.ToString() -ne '${t}'; $i++) { $null = (New-Object -ComObject WScript.Shell).AppActivate('${t}'); Start-Sleep -Milliseconds 500; ${tytulNaWierzchu} } }`
+      ? `if ($s.ToString() -ne '${t}') { $p = 0; $null = [W.Okno]::GetWindowThreadProcessId($h, [ref]$p); $obcy = Get-Process -Id $p -ErrorAction SilentlyContinue; if ($obcy -and @('wsl', 'wslhost', 'WindowsTerminal', 'OpenConsole') -contains $obcy.ProcessName) { $obcy | Stop-Process -Force; Start-Sleep -Milliseconds 800 }; $null = (New-Object -ComObject WScript.Shell).AppActivate('${t}'); Start-Sleep -Milliseconds 500; ${tytulNaWierzchu} }`
       : `if ($s.ToString() -ne '${t}') { throw ('fokus utracony w trakcie zmiany nazwy, na wierzchu: ' + $s.ToString()) }`,
     `if ($s.ToString() -ne '${t}') { throw ('na wierzchu inne okno: ' + $s.ToString()) }`,
   ].join('; ');
@@ -96,7 +95,10 @@ function krokiWyboru(tytul) {
     "if ($k -ne 'Edit') { throw ('pole nazwy niegotowe, fokus w: ' + $k) }",
     'Start-Sleep -Milliseconds 300',
   ].join('; ');
-  const sk = (klawisze, { naWierzch = false, naprawa = true, pole = false } = {}) => () => execFileSync('powershell', ['-NoProfile', '-Command', [
+  // Asynchronicznie, jak wybór niżej: execFileSync blokował główny wątek Electrona, czyli wątek okna-właściciela okna wyboru,
+  // a zablokowany właściciel nie oddaje aktywacji oknu modalnemu. Na Windows 11 po zamknięciu okna WSL na wierzchu zostawało
+  // przez to okno „Electron” (przebieg 42070530814), a ponawiane AppActivate kończyły się ETIMEDOUT (przebieg 42072699444).
+  const sk = (klawisze, { naWierzch = false, naprawa = true, pole = false } = {}) => () => promisify(execFile)('powershell', ['-NoProfile', '-Command', [
     '$w = New-Object -ComObject WScript.Shell',
     // AppActivate bywa odrzucone przez blokadę fokusu (Windows 11, przebieg 42037600320); decyduje sprawdzenie tytułu niżej.
     naWierzch ? `$null = $w.AppActivate('${t}'); Start-Sleep -Milliseconds 300` : '',
@@ -108,8 +110,8 @@ function krokiWyboru(tytul) {
   // „Folder: notes” wskazuje nieistniejący notes\notes. Przycisk to kontrolka okna dialogowego o identyfikatorze 1 (IDOK):
   // okno dialogowe po tytule (klasa #32770), przycisk przez GetDlgItem, a wybór to WM_COMMAND z IDOK i BN_CLICKED do okna,
   // czyli to samo, co okno dostaje po kliknięciu. Przeszukanie drzewa dostępności nie widzi tego przycisku (przebieg
-  // 42068949887: na Windows 11 i Server 2025 lista przycisków bez „Select Folder”). Asynchronicznie: okno obsługuje główny
-  // wątek Electrona, a execFileSync go blokował (przebieg 42043191310).
+  // 42068949887: na Windows 11 i Server 2025 lista przycisków bez „Select Folder”). Asynchronicznie: execFileSync blokował główny
+  // wątek Electrona, właściciela okna wyboru (przebieg 42043191310).
   const wybierz = () => promisify(execFile)('powershell', ['-NoProfile', '-Command', [
     "Add-Type -Name Dlg -Namespace W -MemberDefinition '[DllImport(\"user32.dll\", CharSet=CharSet.Unicode)] public static extern System.IntPtr FindWindow(string c, string t); [DllImport(\"user32.dll\")] public static extern System.IntPtr GetDlgItem(System.IntPtr h, int id); [DllImport(\"user32.dll\", CharSet=CharSet.Unicode)] public static extern int GetWindowText(System.IntPtr h, System.Text.StringBuilder s, int n); [DllImport(\"user32.dll\")] public static extern bool PostMessage(System.IntPtr h, uint m, System.IntPtr w, System.IntPtr l);'",
     `$okno = [W.Dlg]::FindWindow('#32770', '${t}')`,
