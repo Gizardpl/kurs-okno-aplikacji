@@ -74,7 +74,8 @@ function krokiWyboru(tytul) {
   const t = tytul.replace(/'/g, "''");
   // Windows 11 ARM w trakcie kroków otwiera sam okno terminala z WSL („must be updated”, przebieg 42054326729): to okno
   // czystej maszyny, nie nasze. Gdy jest na wierzchu, zamykamy tylko proces tego okna (pid z GetWindowThreadProcessId, gdy
-  // to wsl albo terminal) i wracamy do okna wyboru, ale tylko w krokach, w których ponowne AppActivate niczego nie psuje
+  // to wsl albo terminal) i wracamy do okna wyboru (do trzech prób AppActivate: przebieg 42070530814 na Windows 11 zostawił
+  // na wierzchu okno aplikacji zamiast okna wyboru), ale tylko w krokach, w których ponowne AppActivate niczego nie psuje
   // (przed nowym folderem). W trakcie zmiany nazwy pole nazwy jest już stracone: wtedy osobny błąd, bez dalszych klawiszy.
   const tytulNaWierzchu = '$s.Clear() | Out-Null; $h = [W.Okno]::GetForegroundWindow(); $null = [W.Okno]::GetWindowText($h, $s, 512)';
   const naWierzchu = (naprawa) => [
@@ -82,7 +83,7 @@ function krokiWyboru(tytul) {
     '$s = New-Object System.Text.StringBuilder 512',
     tytulNaWierzchu,
     naprawa
-      ? `if ($s.ToString() -ne '${t}') { $p = 0; $null = [W.Okno]::GetWindowThreadProcessId($h, [ref]$p); $obcy = Get-Process -Id $p -ErrorAction SilentlyContinue; if ($obcy -and @('wsl', 'wslhost', 'WindowsTerminal', 'OpenConsole') -contains $obcy.ProcessName) { $obcy | Stop-Process -Force; Start-Sleep -Milliseconds 800; $null = (New-Object -ComObject WScript.Shell).AppActivate('${t}'); Start-Sleep -Milliseconds 300; ${tytulNaWierzchu} } }`
+      ? `if ($s.ToString() -ne '${t}') { $p = 0; $null = [W.Okno]::GetWindowThreadProcessId($h, [ref]$p); $obcy = Get-Process -Id $p -ErrorAction SilentlyContinue; if ($obcy -and @('wsl', 'wslhost', 'WindowsTerminal', 'OpenConsole') -contains $obcy.ProcessName) { $obcy | Stop-Process -Force; Start-Sleep -Milliseconds 800 }; for ($i = 0; $i -lt 3 -and $s.ToString() -ne '${t}'; $i++) { $null = (New-Object -ComObject WScript.Shell).AppActivate('${t}'); Start-Sleep -Milliseconds 500; ${tytulNaWierzchu} } }`
       : `if ($s.ToString() -ne '${t}') { throw ('fokus utracony w trakcie zmiany nazwy, na wierzchu: ' + $s.ToString()) }`,
     `if ($s.ToString() -ne '${t}') { throw ('na wierzchu inne okno: ' + $s.ToString()) }`,
   ].join('; ');
