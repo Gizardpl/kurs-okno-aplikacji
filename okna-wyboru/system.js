@@ -23,19 +23,26 @@ function zrzut(plik) {
   return plik;
 }
 
-/** Nagranie całego ekranu w tle przez `sekundy`; zwraca { plik, koniec: Promise<kod> }. */
-function nagranieWTle(plikBez, sekundy) {
+/**
+ * Nagranie całego ekranu w tle aż do `zakoncz()` (najwyżej `maksS` sekund): macOS screencapture -v kończy na dowolny znak
+ * na wejściu, ffmpeg na „q”. Zwraca { plik, zakoncz: () => Promise<kod> }.
+ */
+function nagranieWTle(plikBez, maksS) {
   const plik = `${plikBez}.${MAC ? 'mov' : 'mp4'}`;
   const args = MAC
-    ? ['-x', `-V${sekundy}`, plik]
-    : ['-y', '-loglevel', 'error', '-f', 'gdigrab', '-framerate', '30', '-t', String(sekundy), '-i', 'desktop', '-pix_fmt', 'yuv420p', plik];
-  const p = spawn(MAC ? 'screencapture' : 'ffmpeg', args, { stdio: 'ignore' });
+    ? ['-x', '-v', plik]
+    : ['-y', '-loglevel', 'error', '-f', 'gdigrab', '-framerate', '30', '-t', String(maksS), '-i', 'desktop', '-pix_fmt', 'yuv420p', plik];
+  const p = spawn(MAC ? 'screencapture' : 'ffmpeg', args, { stdio: ['pipe', 'ignore', 'ignore'] });
   const koniec = new Promise((ok) => {
-    const straz = setTimeout(() => p.kill('SIGKILL'), (sekundy + 30) * 1000);
+    const straz = setTimeout(() => p.kill('SIGKILL'), (maksS + 30) * 1000);
     p.on('error', () => { clearTimeout(straz); ok(-1); });
     p.on('exit', (kod) => { clearTimeout(straz); ok(kod); });
   });
-  return { plik, koniec };
+  const zakoncz = () => {
+    try { p.stdin.write(MAC ? 'x' : 'q'); p.stdin.end(); } catch { /* proces już zakończony */ }
+    return koniec;
+  };
+  return { plik, zakoncz };
 }
 
 /**
@@ -44,8 +51,11 @@ function nagranieWTle(plikBez, sekundy) {
  */
 function krokiWyboru(tytul) {
   if (MAC) {
+    // Przed klawiszami sprawdzenie, że okno wyboru (arkusz okna aplikacji) jest na miejscu; inaczej błąd kroku.
     const se = (polecenie) => () => execFileSync('osascript', ['-e', 'tell application "System Events"',
-      '-e', 'set frontmost of process "Electron" to true', '-e', polecenie, '-e', 'end tell'], LIMIT);
+      '-e', 'set frontmost of process "Electron" to true',
+      '-e', 'if not (exists sheet 1 of window 1 of process "Electron") then error "brak okna wyboru"',
+      '-e', polecenie, '-e', 'end tell'], LIMIT);
     return [
       ['pulpit', se('keystroke "d" using {command down, shift down}')],
       ['nowy-folder', se('keystroke "n" using {command down, shift down}')],
@@ -54,14 +64,29 @@ function krokiWyboru(tytul) {
       ['wybrany', se('key code 36')],
     ];
   }
-  const sk = (klawisze) => () => execFileSync('powershell', ['-NoProfile', '-Command',
-    `$w = New-Object -ComObject WScript.Shell; $null = $w.AppActivate('${tytul.replace(/'/g, "''")}'); Start-Sleep -Milliseconds 300; ${klawisze.map((k) => `$w.SendKeys('${k}'); Start-Sleep -Milliseconds 400`).join('; ')}`], LIMIT);
+  // Okno wyboru na wierzch tylko w pierwszym kroku: ponowne AppActivate zabiera fokus polu zmiany nazwy nowego folderu.
+  // Pulpit przez pełną ścieżkę w pasku adresu („Desktop” prowadzi do wirtualnego katalogu powłoki, nie do folderu Pulpit).
+  // Przed klawiszami sprawdzenie, że na wierzchu jest okno wyboru (tytuł okna z GetForegroundWindow); inaczej błąd kroku.
+  const t = tytul.replace(/'/g, "''");
+  const naWierzchu = [
+    "Add-Type -Name Okno -Namespace W -MemberDefinition '[DllImport(\"user32.dll\")] public static extern System.IntPtr GetForegroundWindow(); [DllImport(\"user32.dll\", CharSet=CharSet.Unicode)] public static extern int GetWindowText(System.IntPtr h, System.Text.StringBuilder s, int n);'",
+    '$s = New-Object System.Text.StringBuilder 512; $null = [W.Okno]::GetWindowText([W.Okno]::GetForegroundWindow(), $s, 512)',
+    `if ($s.ToString() -ne '${t}') { throw ('na wierzchu inne okno: ' + $s.ToString()) }`,
+  ].join('; ');
+  const sk = (klawisze, naWierzch = false) => () => execFileSync('powershell', ['-NoProfile', '-Command', [
+    '$w = New-Object -ComObject WScript.Shell',
+    naWierzch ? `if (-not $w.AppActivate('${t}')) { throw 'okno wyboru nie wyszło na wierzch' }; Start-Sleep -Milliseconds 300` : '',
+    naWierzchu,
+    ...klawisze.map((k) => `$w.SendKeys(${k}); Start-Sleep -Milliseconds 400`),
+  ].filter(Boolean).join('; ')], LIMIT);
+  const tekst = (t) => `'${t.replace(/'/g, "''")}'`;
   return [
-    ['pulpit', sk(['%d', 'Desktop', '~'])],
-    ['nowy-folder', sk(['^+n'])],
-    ['nazwa', sk(['notes'])],
-    ['utworzony', sk(['~'])],
-    ['wybrany', sk(['~'])],
+    ['pulpit', sk([tekst('%d'), "([Environment]::GetFolderPath('Desktop') -replace '[+^%~(){}]', '{$0}')", tekst('~')], true)],
+    ['nowy-folder', sk([tekst('^+n')])],
+    ['nazwa', sk([tekst('notes')])],
+    ['utworzony', sk([tekst('~')])],
+    ['otwarty', sk([tekst('~')])],
+    ['wybrany', sk([tekst('~')])],
   ];
 }
 

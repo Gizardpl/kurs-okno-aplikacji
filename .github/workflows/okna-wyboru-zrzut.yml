@@ -34,6 +34,8 @@ jobs:
           Get-Process | Where-Object MainWindowTitle | Format-Table Name, MainWindowTitle -AutoSize | Out-String -Width 200
           Get-Process WWAHost, CloudExperienceHostBroker -ErrorAction SilentlyContinue | Stop-Process -Force
           Start-Sleep -Seconds 2
+          (New-Object -ComObject WScript.Shell).SendKeys('{ESC}')
+          Start-Sleep -Seconds 1
           Get-Process WWAHost, CloudExperienceHostBroker -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Name
       - name: Nagrywanie ekranu (Windows, ffmpeg)
         if: runner.os == 'Windows'

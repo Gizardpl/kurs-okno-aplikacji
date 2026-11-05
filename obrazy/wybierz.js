@@ -43,9 +43,11 @@ function wybierz(wiersze) {
     .sort((a, b) => porownaj(a.wersja, b.wersja) || (/Server/.test(a.nazwa) ? 1 : 0) - (/Server/.test(b.nazwa) ? 1 : 0));
   if (!mac.length || !win.length) return { ...ZAPAS };
   const drugi = (lista) => lista.find((w) => etykieta(w) !== etykieta(lista[0]));
+  /** Zapas zawsze inny niż główny obraz (ta sama etykieta = ten sam błąd i konflikt nazwy artefaktu). */
+  const zapas = (lista, staly, inny) => (drugi(lista) ? etykieta(drugi(lista)) : etykieta(lista[0]) !== staly ? staly : inny);
   const wynik = {
-    mac: etykieta(mac[0]), macZapas: drugi(mac) ? etykieta(drugi(mac)) : ZAPAS.macZapas, macWersja: mac[0].wersja.join('.'),
-    win: etykieta(win[0]), winZapas: drugi(win) ? etykieta(drugi(win)) : ZAPAS.winZapas, winWersja: win[0].wersja.join('.'),
+    mac: etykieta(mac[0]), macZapas: zapas(mac, ZAPAS.macZapas, ZAPAS.mac), macWersja: mac[0].wersja.join('.'),
+    win: etykieta(win[0]), winZapas: zapas(win, ZAPAS.winZapas, ZAPAS.win), winWersja: win[0].wersja.join('.'),
   };
   return poprawny(wynik) ? wynik : { ...ZAPAS };
 }
@@ -62,9 +64,11 @@ const poprawny = (w) => [w.mac, w.macZapas, w.win, w.winZapas].every((e) => ETYK
 async function wybierzZSieci(pobierz) {
   try {
     const wiersze = obrazyZTabeli(await pobierz(README));
+    // Brak opisu któregokolwiek obrazu = brak pełnej listy: zapas zamiast wyboru z niepełnej (mógłby wskazać starszy obraz).
     for (const w of wiersze) {
       if (!/^(macOS|Xcode|Windows)\b/.test(w.nazwa)) continue;
-      try { w.wersja = wersjaZOpisu(await pobierz(w.opis)); } catch { w.wersja = null; }
+      w.wersja = wersjaZOpisu(await pobierz(w.opis));
+      if (!w.wersja) throw new Error(`brak wersji systemu w opisie ${w.nazwa}`);
     }
     return wybierz(wiersze);
   } catch {

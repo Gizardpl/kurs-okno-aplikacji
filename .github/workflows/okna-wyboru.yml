@@ -24,6 +24,7 @@ jobs:
           persist-credentials: false
       - id: wybor
         name: Najświeższe obrazy systemu
+        shell: bash
         run: node obrazy/wybierz.js | tee -a "$GITHUB_STEP_SUMMARY"
 
   mac:
@@ -34,7 +35,7 @@ jobs:
 
   mac-zapas:
     needs: [obrazy, mac]
-    if: always() && needs.obrazy.result == 'success' && needs.mac.result != 'success'
+    if: ${{ !cancelled() && needs.obrazy.result == 'success' && needs.mac.result != 'success' }}
     uses: ./.github/workflows/okna-wyboru-zrzut.yml
     with:
       obraz: ${{ needs.obrazy.outputs.mac_zapas }}
@@ -47,7 +48,7 @@ jobs:
 
   win-zapas:
     needs: [obrazy, win]
-    if: always() && needs.obrazy.result == 'success' && needs.win.result != 'success'
+    if: ${{ !cancelled() && needs.obrazy.result == 'success' && needs.win.result != 'success' }}
     uses: ./.github/workflows/okna-wyboru-zrzut.yml
     with:
       obraz: ${{ needs.obrazy.outputs.win_zapas }}
