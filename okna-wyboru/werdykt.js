@@ -9,7 +9,7 @@ function werdykt(wynik, folderIstnieje) {
   const powody = [];
   for (const [k, w] of Object.entries(wynik)) if (k !== 'wybrany folder' && w !== 'ok') powody.push(`${k}: ${w}`);
   if (wynik['wybrany folder'] !== FOLDER) powody.push(`wybrany folder: ${wynik['wybrany folder'] || 'okno się nie zamknęło'}`);
-  if (!folderIstnieje) powody.push(`na Pulpicie nie ma folderu ${FOLDER}`);
+  if (!folderIstnieje) powody.push(`wybrany folder to nie ${FOLDER} na Pulpicie albo go tam nie ma`);
   return { kod: powody.length ? 1 : 0, powody };
 }
 

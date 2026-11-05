@@ -38,9 +38,12 @@ function nagranieWTle(plikBez, maksS) {
     p.on('error', () => { clearTimeout(straz); ok(-1); });
     p.on('exit', (kod) => { clearTimeout(straz); ok(kod); });
   });
+  // Gdy proces nie zareaguje na znak na wejściu w 5 s, SIGINT (screencapture i ffmpeg zamykają wtedy plik poprawnie);
+  // SIGKILL ze strażnika zostaje ostatnią deską.
   const zakoncz = () => {
     try { p.stdin.write(MAC ? 'x' : 'q'); p.stdin.end(); } catch { /* proces już zakończony */ }
-    return koniec;
+    const przerwij = setTimeout(() => { try { p.kill('SIGINT'); } catch { /* już zakończony */ } }, 5000);
+    return koniec.then((kod) => { clearTimeout(przerwij); return kod; });
   };
   return { plik, zakoncz };
 }
@@ -51,11 +54,10 @@ function nagranieWTle(plikBez, maksS) {
  */
 function krokiWyboru(tytul) {
   if (MAC) {
-    // Przed klawiszami sprawdzenie, że okno wyboru (arkusz okna aplikacji) jest na miejscu; inaczej błąd kroku.
+    // Bez sprawdzania arkusza w drzewie dostępności: na macOS 26 i 27 okno wyboru nie jest „sheet 1 of window 1”
+    // (przebieg 42037600320). Klawisze, które nie trafiły, wychodzą w werdykcie (brak folderu „notes”).
     const se = (polecenie) => () => execFileSync('osascript', ['-e', 'tell application "System Events"',
-      '-e', 'set frontmost of process "Electron" to true',
-      '-e', 'if not (exists sheet 1 of window 1 of process "Electron") then error "brak okna wyboru"',
-      '-e', polecenie, '-e', 'end tell'], LIMIT);
+      '-e', 'set frontmost of process "Electron" to true', '-e', polecenie, '-e', 'end tell'], LIMIT);
     return [
       ['pulpit', se('keystroke "d" using {command down, shift down}')],
       ['nowy-folder', se('keystroke "n" using {command down, shift down}')],
@@ -75,18 +77,29 @@ function krokiWyboru(tytul) {
   ].join('; ');
   const sk = (klawisze, naWierzch = false) => () => execFileSync('powershell', ['-NoProfile', '-Command', [
     '$w = New-Object -ComObject WScript.Shell',
-    naWierzch ? `if (-not $w.AppActivate('${t}')) { throw 'okno wyboru nie wyszło na wierzch' }; Start-Sleep -Milliseconds 300` : '',
+    // AppActivate bywa odrzucone przez blokadę fokusu (Windows 11, przebieg 42037600320); decyduje sprawdzenie tytułu niżej.
+    naWierzch ? `$null = $w.AppActivate('${t}'); Start-Sleep -Milliseconds 300` : '',
     naWierzchu,
     ...klawisze.map((k) => `$w.SendKeys(${k}); Start-Sleep -Milliseconds 400`),
   ].filter(Boolean).join('; ')], LIMIT);
-  const tekst = (t) => `'${t.replace(/'/g, "''")}'`;
+  // Wybór jak kliknięcie przycisku „Select Folder” (przycisk OK okna, identyfikator 1) przez UI Automation: klawisz
+  // zatwierdzenia w liście otwiera zaznaczony folder, a wewnątrz pole „Folder: notes” wskazuje nieistniejący notes\notes.
+  const wybierz = () => execFileSync('powershell', ['-NoProfile', '-Command', [
+    'Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes',
+    '$A = [System.Windows.Automation.AutomationElement]',
+    `$okno = $A::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition($A::NameProperty, '${t}')))`,
+    "if (-not $okno) { throw 'brak okna wyboru' }",
+    "$ok = $okno.FindFirst([System.Windows.Automation.TreeScope]::Descendants, (New-Object System.Windows.Automation.PropertyCondition($A::AutomationIdProperty, '1')))",
+    "if (-not $ok) { throw 'brak przycisku Select Folder' }",
+    '$ok.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()',
+  ].join('; ')], LIMIT);
+  const tekst = (s) => `'${s.replace(/'/g, "''")}'`;
   return [
     ['pulpit', sk([tekst('%d'), "([Environment]::GetFolderPath('Desktop') -replace '[+^%~(){}]', '{$0}')", tekst('~')], true)],
     ['nowy-folder', sk([tekst('^+n')])],
     ['nazwa', sk([tekst('notes')])],
     ['utworzony', sk([tekst('~')])],
-    ['otwarty', sk([tekst('~')])],
-    ['wybrany', sk([tekst('~')])],
+    ['wybrany', wybierz],
   ];
 }
 

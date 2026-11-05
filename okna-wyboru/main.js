@@ -33,13 +33,17 @@ async function przebieg() {
   fs.writeFileSync(path.join(WYJSCIE, `system-${process.platform}.json`),
     JSON.stringify({ platforma: process.platform, wydanie: os.release(), wersja: os.version(), electron: process.versions.electron }, null, 2));
   const wynik = {};
+  let wybranaSciezka = null; // pełna ścieżka tylko do werdyktu, do artefaktu trafia sama nazwa
   const okno = new BrowserWindow({ width: 1200, height: 800, backgroundColor: '#181818', show: true });
   await okno.loadURL('data:text/html,<body style="background:%23181818"></body>');
   okno.focus();
   const nagranie = nagranieWTle(path.join(WYJSCIE, `${process.platform}-nagranie`), NAGRANIE_S);
   await czekaj(1500);
   const wybor = dialog.showOpenDialog(okno, { title: TYTUL, message: TYTUL, properties: ['openDirectory', 'createDirectory'] })
-    .then((r) => { wynik['wybrany folder'] = r.canceled ? 'anulowano' : r.filePaths.map((p) => path.basename(p)).join(', '); })
+    .then((r) => {
+      wybranaSciezka = r.canceled ? null : r.filePaths[0];
+      wynik['wybrany folder'] = r.canceled ? 'anulowano' : r.filePaths.map((p) => path.basename(p)).join(', ');
+    })
     .catch((e) => { wynik.okno = blad(e); });
   await czekaj(2500);
   stan(wynik, 0, 'start');
@@ -55,7 +59,9 @@ async function przebieg() {
   const kod = await nagranie.zakoncz();
   wynik.nagranie = kod === 0 && fs.existsSync(nagranie.plik) && fs.statSync(nagranie.plik).size ? 'ok' : `błąd: kod ${kod}`;
   fs.writeFileSync(path.join(WYJSCIE, `wynik-${process.platform}.json`), JSON.stringify(wynik, null, 2));
-  const w = werdykt(wynik, fs.existsSync(path.join(app.getPath('desktop'), FOLDER)));
+  const cel = path.join(app.getPath('desktop'), FOLDER);
+  const norm = (p) => (process.platform === 'win32' ? path.resolve(p).toLowerCase() : path.resolve(p));
+  const w = werdykt(wynik, fs.existsSync(cel) && wybranaSciezka !== null && norm(wybranaSciezka) === norm(cel));
   console.log(JSON.stringify(wynik));
   for (const p of w.powody) console.error(`NIEUDANY: ${p}`);
   return w.kod;
